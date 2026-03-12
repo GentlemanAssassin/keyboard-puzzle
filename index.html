@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Keyboard Puzzle</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'SF Pro Display', -apple-system, 'Segoe UI', Roboto, sans-serif; overflow-x: hidden; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useRef, useEffect } = React;
+
+const PC_ROWS = [
+  ["\`","1","2","3","4","5","6","7","8","9","0","-","=","Backspace"],
+  ["Tab","Q","W","E","R","T","Y","U","I","O","P","[","]","\\"],
+  ["Caps","A","S","D","F","G","H","J","K","L",";","'","Enter"],
+  ["Shift","Z","X","C","V","B","N","M",",",".","/","Shift"],
+  ["Ctrl","Win","Alt","Space","Alt","Win","Menu","Ctrl"]
+];
+
+const MAC_ROWS = [
+  ["\`","1","2","3","4","5","6","7","8","9","0","-","=","Delete"],
+  ["Tab","Q","W","E","R","T","Y","U","I","O","P","[","]","\\"],
+  ["Caps","A","S","D","F","G","H","J","K","L",";","'","Return"],
+  ["Shift","Z","X","C","V","B","N","M",",",".","/","Shift"],
+  ["fn","\u2303","\u2325","\u2318","Space","\u2318","\u2325","\u2190","\u2192"]
+];
+
+const WIDE_KEYS = {
+  "Backspace": 2, "Delete": 2, "Tab": 1.5, "\\": 1.5,
+  "Caps": 1.8, "Enter": 2.2, "Return": 2.2,
+  "Shift": 2.5, "Space": 6,
+  "Ctrl": 1.5, "Win": 1.25, "Alt": 1.25, "Menu": 1.25,
+  "fn": 1, "\u2303": 1.25, "\u2325": 1.25, "\u2318": 1.5, "\u2190": 1, "\u2192": 1
+};
+
+function getKeyWidth(key) { return WIDE_KEYS[key] || 1; }
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function buildSlots(rows) {
+  const slots = [];
+  rows.forEach((row, r) => row.forEach((key, c) => {
+    slots.push({ id: r+"-"+c, correctKey: key, row: r, col: c });
+  }));
+  return slots;
+}
+
+function buildKeycaps(rows) {
+  const caps = [];
+  rows.forEach(row => row.forEach(key => caps.push(key)));
+  return shuffle(caps);
+}
+
+const C = {
+  bg: "#1a1a2e", board: "#16213e", slot: "#0f3460", slotHover: "#1a5276",
+  capText: "#1a1a2e", correct: "#2ecc71", incorrect: "#e74c3c",
+  accent: "#e94560", textLight: "#eee", textMuted: "#aaa", tray: "#0d1b2a"
+};
+
+function KeyboardPuzzle() {
+  const [mode, setMode] = useState(null);
+  const [slots, setSlots] = useState([]);
+  const [placed, setPlaced] = useState({});
+  const [tray, setTray] = useState([]);
+  const [dragging, setDragging] = useState(null);
+  const [dragSource, setDragSource] = useState(null);
+  const [hoverSlot, setHoverSlot] = useState(null);
+  const [checked, setChecked] = useState(false);
+  const [results, setResults] = useState({});
+  const [score, setScore] = useState(null);
+  const [timer, setTimer] = useState(0);
+  const [running, setRunning] = useState(false);
+  const [bestTimes, setBestTimes] = useState({ pc: null, mac: null });
+  const intervalRef = useRef(null);
+
+  useEffect(() => {
+    if (running) {
+      intervalRef.current = setInterval(() => setTimer(t => t + 1), 1000);
+    }
+    return () => clearInterval(intervalRef.current);
+  }, [running]);
+
+  const formatTime = (s) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return m + ":" + sec.toString().padStart(2, "0");
+  };
+
+  const startGame = (m) => {
+    const rows = m === "mac" ? MAC_ROWS : PC_ROWS;
+    setMode(m); setSlots(buildSlots(rows)); setPlaced({});
+    setTray(buildKeycaps(rows)); setDragging(null); setDragSource(null);
+    setHoverSlot(null); setChecked(false); setResults({});
+    setScore(null); setTimer(0); setRunning(true);
+  };
+
+  const resetGame = () => { setMode(null); setRunning(false); clearInterval(intervalRef.current); };
+
+  const onDragStartFromTray = (idx, key) => { setDragging(key); setDragSource({ type: "tray", idx }); };
+  const onDragStartFromSlot = (slotId, key) => { setDragging(key); setDragSource({ type: "slot", slotId }); };
+
+  const onDropOnSlot = (slotId) => {
+    if (!dragging || checked) return;
+    const existing = placed[slotId];
+    let newPlaced = { ...placed };
+    let newTray = [...tray];
+    if (dragSource.type === "tray") {
+      newTray.splice(dragSource.idx, 1);
+      if (existing) newTray.push(existing);
+      newPlaced[slotId] = dragging;
+    } else if (dragSource.type === "slot") {
+      if (existing) { newPlaced[dragSource.slotId] = existing; }
+      else { delete newPlaced[dragSource.slotId]; }
+      newPlaced[slotId] = dragging;
+    }
+    setPlaced(newPlaced); setTray(newTray);
+    setDragging(null); setDragSource(null); setHoverSlot(null);
+  };
+
+  const onDropOnTray = () => {
+    if (!dragging || checked) return;
+    let newTray = [...tray]; let newPlaced = { ...placed };
+    if (dragSource.type === "slot") { delete newPlaced[dragSource.slotId]; newTray.push(dragging); }
+    setPlaced(newPlaced); setTray(newTray); setDragging(null); setDragSource(null);
+  };
+
+  const checkAnswers = () => {
+    const r = {}; let correct = 0;
+    slots.forEach(s => {
+      const p = placed[s.id];
+      const isCorrect = p === s.correctKey;
+      r[s.id] = p ? (isCorrect ? "correct" : "incorrect") : "empty";
+      if (isCorrect) correct++;
+    });
+    setResults(r); setChecked(true); setRunning(false);
+    clearInterval(intervalRef.current);
+    setScore({ correct, total: slots.length });
+    if (correct === slots.length) {
+      const key = mode;
+      if (!bestTimes[key] || timer < bestTimes[key]) {
+        setBestTimes(prev => ({ ...prev, [key]: timer }));
+      }
+    }
+  };
+
+  const tryAgain = () => startGame(mode);
+  const rows = mode === "mac" ? MAC_ROWS : PC_ROWS;
+
+  // ---- START SCREEN ----
+  if (!mode) {
+    return (
+      <div style={{
+        minHeight: "100vh", display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        background: "linear-gradient(135deg, "+C.bg+" 0%, #0d1b2a 100%)",
+        color: C.textLight
+      }}>
+        <div style={{ textAlign: "center", maxWidth: 600 }}>
+          <div style={{ fontSize: 64, marginBottom: 8 }}>{"\u2328\uFE0F"}</div>
+          <h1 style={{ fontSize: 42, fontWeight: 700, margin: "0 0 12px", letterSpacing: "-0.5px" }}>
+            Keyboard Puzzle
+          </h1>
+          <p style={{ fontSize: 18, color: C.textMuted, margin: "0 0 48px", lineHeight: 1.6 }}>
+            All the keycaps fell off! Drag each key back to its correct position
+            on the keyboard. Think you know your layout?
+          </p>
+          <div style={{ display: "flex", gap: 24, justifyContent: "center", flexWrap: "wrap" }}>
+            <button onClick={() => startGame("pc")} style={{
+              background: "linear-gradient(135deg, #1a5276, #2980b9)",
+              color: "#fff", border: "none", borderRadius: 16,
+              padding: "32px 48px", cursor: "pointer", fontSize: 20,
+              fontWeight: 600, boxShadow: "0 4px 20px rgba(41,128,185,0.3)",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 8
+            }}>
+              <span style={{ fontSize: 36 }}>{"\uD83D\uDDA5\uFE0F"}</span>
+              <span>PC Layout</span>
+              <span style={{ fontSize: 13, fontWeight: 400, opacity: 0.8 }}>Windows / Standard</span>
+              {bestTimes.pc && <span style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Best: {formatTime(bestTimes.pc)}</span>}
+            </button>
+            <button onClick={() => startGame("mac")} style={{
+              background: "linear-gradient(135deg, #2c3e50, #4a4a4a)",
+              color: "#fff", border: "none", borderRadius: 16,
+              padding: "32px 48px", cursor: "pointer", fontSize: 20,
+              fontWeight: 600, boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 8
+            }}>
+              <span style={{ fontSize: 36 }}>{"\uD83C\uDF4E"}</span>
+              <span>Mac Layout</span>
+              <span style={{ fontSize: 13, fontWeight: 400, opacity: 0.8 }}>Apple / macOS</span>
+              {bestTimes.mac && <span style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Best: {formatTime(bestTimes.mac)}</span>}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- GAME SCREEN ----
+  const allPlaced = Object.keys(placed).length === slots.length;
+  const perfect = score && score.correct === score.total;
+
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: "linear-gradient(135deg, "+C.bg+" 0%, #0d1b2a 100%)",
+      color: C.textLight, padding: "20px 20px 40px",
+      display: "flex", flexDirection: "column", alignItems: "center"
+    }}>
+      {/* Header */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        width: "100%", maxWidth: 960, marginBottom: 20
+      }}>
+        <button onClick={resetGame} style={{
+          background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
+          color: C.textLight, borderRadius: 10, padding: "8px 20px",
+          cursor: "pointer", fontSize: 14, fontWeight: 500
+        }}>{"\u2190"} Back</button>
+        <div style={{ textAlign: "center" }}>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>
+            {"\u2328\uFE0F"} {mode === "mac" ? "Mac" : "PC"} Keyboard
+          </h2>
+          <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>
+            {tray.length} keys remaining
+          </div>
+        </div>
+        <div style={{
+          background: "rgba(255,255,255,0.1)", borderRadius: 10,
+          padding: "8px 20px", fontSize: 20, fontWeight: 600,
+          fontVariantNumeric: "tabular-nums", minWidth: 80, textAlign: "center"
+        }}>{formatTime(timer)}</div>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{
+        width: "100%", maxWidth: 960, height: 6, borderRadius: 3,
+        background: "rgba(255,255,255,0.1)", marginBottom: 24, overflow: "hidden"
+      }}>
+        <div style={{
+          height: "100%", borderRadius: 3,
+          width: (Object.keys(placed).length / slots.length) * 100 + "%",
+          background: checked
+            ? (perfect ? C.correct : "linear-gradient(90deg, "+C.correct+", "+C.incorrect+")")
+            : "linear-gradient(90deg, "+C.accent+", #f5c542)",
+          transition: "width 0.3s ease"
+        }} />
+      </div>
+
+      {/* Keyboard Board */}
+      <div style={{
+        background: C.board, borderRadius: 16, padding: 16,
+        boxShadow: "0 8px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)",
+        border: "1px solid rgba(255,255,255,0.06)", marginBottom: 28
+      }}>
+        {rows.map((row, r) => (
+          <div key={r} style={{ display: "flex", gap: 5, marginBottom: r < rows.length - 1 ? 5 : 0, justifyContent: "center" }}>
+            {row.map((key, c) => {
+              const slotId = r+"-"+c;
+              const w = getKeyWidth(key);
+              const placedKey = placed[slotId];
+              const result = results[slotId];
+              const isHovered = hoverSlot === slotId && dragging;
+
+              let bg = C.slot;
+              let border = "2px dashed rgba(255,255,255,0.15)";
+              let shadow = "inset 0 2px 4px rgba(0,0,0,0.3)";
+
+              if (result === "correct") {
+                bg = "rgba(46,204,113,0.25)";
+                border = "2px solid "+C.correct;
+                shadow = "inset 0 2px 4px rgba(0,0,0,0.2), 0 0 12px rgba(46,204,113,0.3)";
+              } else if (result === "incorrect") {
+                bg = "rgba(231,76,60,0.25)";
+                border = "2px solid "+C.incorrect;
+                shadow = "inset 0 2px 4px rgba(0,0,0,0.2), 0 0 12px rgba(231,76,60,0.3)";
+              } else if (isHovered) {
+                bg = C.slotHover;
+                border = "2px dashed rgba(255,255,255,0.4)";
+              }
+
+              return (
+                <div key={c}
+                  onDragOver={e => { e.preventDefault(); setHoverSlot(slotId); }}
+                  onDragLeave={() => setHoverSlot(null)}
+                  onDrop={e => { e.preventDefault(); onDropOnSlot(slotId); }}
+                  style={{
+                    width: w * 52, height: 48, borderRadius: 8,
+                    background: bg, border: border, boxShadow: shadow,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    position: "relative", transition: "all 0.2s ease"
+                  }}
+                >
+                  {placedKey && (
+                    <div draggable={!checked}
+                      onDragStart={() => onDragStartFromSlot(slotId, placedKey)}
+                      style={{
+                        width: "calc(100% - 4px)", height: "calc(100% - 4px)", borderRadius: 6,
+                        background: result === "correct"
+                          ? "linear-gradient(180deg, #5dde8e, #2ecc71)"
+                          : result === "incorrect"
+                            ? "linear-gradient(180deg, #f06060, #c0392b)"
+                            : "linear-gradient(180deg, #f0f0f0, #d5d5d5)",
+                        color: result ? "#fff" : C.capText,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: w > 1.5 ? 12 : 14, fontWeight: 700,
+                        cursor: checked ? "default" : "grab",
+                        boxShadow: result ? "0 2px 6px rgba(0,0,0,0.3)" : "0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.8)",
+                        textShadow: result ? "0 1px 2px rgba(0,0,0,0.3)" : "none",
+                        userSelect: "none", letterSpacing: "0.5px"
+                      }}
+                    >{placedKey}</div>
+                  )}
+                  {result === "incorrect" && (
+                    <div style={{
+                      position: "absolute", bottom: -18, fontSize: 10,
+                      color: C.correct, fontWeight: 600, whiteSpace: "nowrap"
+                    }}>{slots.find(s => s.id === slotId)?.correctKey}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      {/* Score */}
+      {checked && score && (
+        <div style={{
+          textAlign: "center", marginBottom: 20,
+          background: perfect ? "rgba(46,204,113,0.15)" : "rgba(255,255,255,0.05)",
+          border: "1px solid "+(perfect ? "rgba(46,204,113,0.3)" : "rgba(255,255,255,0.1)"),
+          borderRadius: 14, padding: "20px 40px"
+        }}>
+          <div style={{ fontSize: 32, marginBottom: 6 }}>{perfect ? "\uD83C\uDF89" : "\uD83E\uDD14"}</div>
+          <div style={{ fontSize: 28, fontWeight: 700 }}>{score.correct} / {score.total}</div>
+          <div style={{ fontSize: 14, color: C.textMuted, marginTop: 4 }}>
+            {perfect
+              ? "Perfect! Completed in "+formatTime(timer)
+              : Math.round((score.correct/score.total)*100)+"% correct \u2014 "+(score.total-score.correct)+" keys misplaced"
+            }
+          </div>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 16 }}>
+            <button onClick={tryAgain} style={{
+              background: C.accent, color: "#fff", border: "none",
+              borderRadius: 10, padding: "10px 28px", cursor: "pointer", fontSize: 15, fontWeight: 600
+            }}>Try Again</button>
+            <button onClick={resetGame} style={{
+              background: "rgba(255,255,255,0.1)", color: C.textLight,
+              border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: 10, padding: "10px 28px", cursor: "pointer", fontSize: 15, fontWeight: 500
+            }}>Switch Layout</button>
+          </div>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      {!checked && (
+        <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
+          <button onClick={checkAnswers} disabled={!allPlaced} style={{
+            background: allPlaced ? "linear-gradient(135deg, "+C.accent+", #c0392b)" : "rgba(255,255,255,0.08)",
+            color: allPlaced ? "#fff" : "rgba(255,255,255,0.3)",
+            border: "none", borderRadius: 12, padding: "12px 36px",
+            cursor: allPlaced ? "pointer" : "not-allowed",
+            fontSize: 16, fontWeight: 600,
+            boxShadow: allPlaced ? "0 4px 20px rgba(233,69,96,0.3)" : "none",
+            transition: "all 0.2s ease"
+          }}>{"\u2713"} Check Answers</button>
+          <button onClick={tryAgain} style={{
+            background: "rgba(255,255,255,0.08)", color: C.textMuted,
+            border: "1px solid rgba(255,255,255,0.1)",
+            borderRadius: 12, padding: "12px 24px", cursor: "pointer", fontSize: 14, fontWeight: 500
+          }}>Shuffle &amp; Restart</button>
+        </div>
+      )}
+
+      {/* Key Tray */}
+      {!checked && (
+        <div onDragOver={e => e.preventDefault()}
+          onDrop={e => { e.preventDefault(); onDropOnTray(); }}
+          style={{
+            width: "100%", maxWidth: 960, minHeight: 120,
+            background: C.tray, borderRadius: 16,
+            border: "2px dashed rgba(255,255,255,0.1)",
+            padding: 20, display: "flex", flexWrap: "wrap",
+            gap: 8, justifyContent: "center", alignContent: "flex-start"
+          }}
+        >
+          {tray.length === 0 && (
+            <div style={{ color: C.textMuted, fontSize: 15, padding: 20 }}>
+              All keys placed! Click "Check Answers" to see how you did.
+            </div>
+          )}
+          {tray.map((key, idx) => (
+            <div key={idx} draggable
+              onDragStart={() => onDragStartFromTray(idx, key)}
+              style={{
+                width: 52, height: 46, borderRadius: 8,
+                background: "linear-gradient(180deg, #f0f0f0, #d5d5d5)",
+                color: C.capText,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 11, fontWeight: 700,
+                cursor: "grab", userSelect: "none",
+                boxShadow: "0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.9)",
+                letterSpacing: "0.5px", overflow: "hidden",
+                textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 4px"
+              }}
+            >{key}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<KeyboardPuzzle />);
+</script>
+</body>
+</html>

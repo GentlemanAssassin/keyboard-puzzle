@@ -2,11 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Keyboard Puzzle</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'SF Pro Display', -apple-system, 'Segoe UI', Roboto, sans-serif; overflow-x: hidden; }
+  body {
+    font-family: 'SF Pro Display', -apple-system, 'Segoe UI', Roboto, sans-serif;
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
 </style>
 </head>
 <body>
@@ -15,7 +20,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <script type="text/babel">
-const { useState, useRef, useEffect } = React;
+const { useState, useRef, useEffect, useCallback } = React;
 
 const PC_ROWS = [
   ["\`","1","2","3","4","5","6","7","8","9","0","-","=","Backspace"],
@@ -43,6 +48,12 @@ const WIDE_KEYS = {
 
 function getKeyWidth(key) { return WIDE_KEYS[key] || 1; }
 
+function getRowTotalWidth(row) {
+  let total = 0;
+  row.forEach(key => { total += getKeyWidth(key); });
+  return total;
+}
+
 function shuffle(arr) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -69,7 +80,8 @@ function buildKeycaps(rows) {
 const C = {
   bg: "#1a1a2e", board: "#16213e", slot: "#0f3460", slotHover: "#1a5276",
   capText: "#1a1a2e", correct: "#2ecc71", incorrect: "#e74c3c",
-  accent: "#e94560", textLight: "#eee", textMuted: "#aaa", tray: "#0d1b2a"
+  accent: "#e94560", textLight: "#eee", textMuted: "#aaa", tray: "#0d1b2a",
+  selected: "#f5c542"
 };
 
 function KeyboardPuzzle() {
@@ -86,7 +98,29 @@ function KeyboardPuzzle() {
   const [timer, setTimer] = useState(0);
   const [running, setRunning] = useState(false);
   const [bestTimes, setBestTimes] = useState({ pc: null, mac: null });
+  const [selected, setSelected] = useState(null); // {type:"tray",idx,key} or {type:"slot",slotId,key}
+  const [scale, setScale] = useState(1);
   const intervalRef = useRef(null);
+  const boardRef = useRef(null);
+
+  // Responsive scaling
+  useEffect(() => {
+    function calcScale() {
+      if (!mode) return;
+      const rows = mode === "mac" ? MAC_ROWS : PC_ROWS;
+      const maxRowWidth = Math.max(...rows.map(r => getRowTotalWidth(r)));
+      const BASE_KEY = 52;
+      const GAP = 5;
+      const PADDING = 32;
+      const boardNaturalWidth = maxRowWidth * BASE_KEY + (14 - 1) * GAP + PADDING;
+      const available = window.innerWidth - 24;
+      const s = Math.min(1, available / boardNaturalWidth);
+      setScale(s);
+    }
+    calcScale();
+    window.addEventListener("resize", calcScale);
+    return () => window.removeEventListener("resize", calcScale);
+  }, [mode]);
 
   useEffect(() => {
     if (running) {
@@ -106,29 +140,34 @@ function KeyboardPuzzle() {
     setMode(m); setSlots(buildSlots(rows)); setPlaced({});
     setTray(buildKeycaps(rows)); setDragging(null); setDragSource(null);
     setHoverSlot(null); setChecked(false); setResults({});
-    setScore(null); setTimer(0); setRunning(true);
+    setScore(null); setTimer(0); setRunning(true); setSelected(null);
   };
 
-  const resetGame = () => { setMode(null); setRunning(false); clearInterval(intervalRef.current); };
+  const resetGame = () => { setMode(null); setRunning(false); clearInterval(intervalRef.current); setSelected(null); };
 
+  // Desktop drag handlers
   const onDragStartFromTray = (idx, key) => { setDragging(key); setDragSource({ type: "tray", idx }); };
   const onDragStartFromSlot = (slotId, key) => { setDragging(key); setDragSource({ type: "slot", slotId }); };
 
-  const onDropOnSlot = (slotId) => {
-    if (!dragging || checked) return;
-    const existing = placed[slotId];
+  const placeKey = (targetSlotId, sourceType, sourceIdx, sourceSlotId, key) => {
+    const existing = placed[targetSlotId];
     let newPlaced = { ...placed };
     let newTray = [...tray];
-    if (dragSource.type === "tray") {
-      newTray.splice(dragSource.idx, 1);
+    if (sourceType === "tray") {
+      newTray.splice(sourceIdx, 1);
       if (existing) newTray.push(existing);
-      newPlaced[slotId] = dragging;
-    } else if (dragSource.type === "slot") {
-      if (existing) { newPlaced[dragSource.slotId] = existing; }
-      else { delete newPlaced[dragSource.slotId]; }
-      newPlaced[slotId] = dragging;
+      newPlaced[targetSlotId] = key;
+    } else if (sourceType === "slot") {
+      if (existing) { newPlaced[sourceSlotId] = existing; }
+      else { delete newPlaced[sourceSlotId]; }
+      newPlaced[targetSlotId] = key;
     }
     setPlaced(newPlaced); setTray(newTray);
+  };
+
+  const onDropOnSlot = (slotId) => {
+    if (!dragging || checked) return;
+    placeKey(slotId, dragSource.type, dragSource.idx, dragSource.slotId, dragging);
     setDragging(null); setDragSource(null); setHoverSlot(null);
   };
 
@@ -137,6 +176,54 @@ function KeyboardPuzzle() {
     let newTray = [...tray]; let newPlaced = { ...placed };
     if (dragSource.type === "slot") { delete newPlaced[dragSource.slotId]; newTray.push(dragging); }
     setPlaced(newPlaced); setTray(newTray); setDragging(null); setDragSource(null);
+  };
+
+  // Tap-to-place (mobile friendly)
+  const onTapTrayKey = (idx, key) => {
+    if (checked) return;
+    if (selected && selected.type === "tray" && selected.idx === idx) {
+      setSelected(null); return; // deselect
+    }
+    if (selected && selected.type === "slot") {
+      // swap: slot key goes to tray, tray key goes to slot
+      let newPlaced = { ...placed };
+      let newTray = [...tray];
+      newTray.splice(idx, 1);
+      newTray.push(selected.key);
+      newPlaced[selected.slotId] = key;
+      setPlaced(newPlaced); setTray(newTray); setSelected(null);
+      return;
+    }
+    setSelected({ type: "tray", idx, key });
+  };
+
+  const onTapSlot = (slotId) => {
+    if (checked) return;
+    const placedKey = placed[slotId];
+
+    if (selected) {
+      if (selected.type === "tray") {
+        placeKey(slotId, "tray", selected.idx, null, selected.key);
+        setSelected(null);
+      } else if (selected.type === "slot") {
+        if (selected.slotId === slotId) { setSelected(null); return; }
+        placeKey(slotId, "slot", null, selected.slotId, selected.key);
+        setSelected(null);
+      }
+    } else if (placedKey) {
+      setSelected({ type: "slot", slotId, key: placedKey });
+    }
+  };
+
+  const onTapTrayArea = () => {
+    // If a slot key is selected and user taps tray area, move it back
+    if (selected && selected.type === "slot" && !checked) {
+      let newPlaced = { ...placed };
+      let newTray = [...tray];
+      delete newPlaced[selected.slotId];
+      newTray.push(selected.key);
+      setPlaced(newPlaced); setTray(newTray); setSelected(null);
+    }
   };
 
   const checkAnswers = () => {
@@ -150,16 +237,17 @@ function KeyboardPuzzle() {
     setResults(r); setChecked(true); setRunning(false);
     clearInterval(intervalRef.current);
     setScore({ correct, total: slots.length });
+    setSelected(null);
     if (correct === slots.length) {
-      const key = mode;
-      if (!bestTimes[key] || timer < bestTimes[key]) {
-        setBestTimes(prev => ({ ...prev, [key]: timer }));
+      if (!bestTimes[mode] || timer < bestTimes[mode]) {
+        setBestTimes(prev => ({ ...prev, [mode]: timer }));
       }
     }
   };
 
   const tryAgain = () => startGame(mode);
   const rows = mode === "mac" ? MAC_ROWS : PC_ROWS;
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 700;
 
   // ---- START SCREEN ----
   if (!mode) {
@@ -168,41 +256,43 @@ function KeyboardPuzzle() {
         minHeight: "100vh", display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center",
         background: "linear-gradient(135deg, "+C.bg+" 0%, #0d1b2a 100%)",
-        color: C.textLight
+        color: C.textLight, padding: 20
       }}>
         <div style={{ textAlign: "center", maxWidth: 600 }}>
           <div style={{ fontSize: 64, marginBottom: 8 }}>{"\u2328\uFE0F"}</div>
-          <h1 style={{ fontSize: 42, fontWeight: 700, margin: "0 0 12px", letterSpacing: "-0.5px" }}>
+          <h1 style={{ fontSize: "clamp(28px, 7vw, 42px)", fontWeight: 700, margin: "0 0 12px", letterSpacing: "-0.5px" }}>
             Keyboard Puzzle
           </h1>
-          <p style={{ fontSize: 18, color: C.textMuted, margin: "0 0 48px", lineHeight: 1.6 }}>
-            All the keycaps fell off! Drag each key back to its correct position
-            on the keyboard. Think you know your layout?
+          <p style={{ fontSize: "clamp(14px, 3.5vw, 18px)", color: C.textMuted, margin: "0 0 48px", lineHeight: 1.6 }}>
+            All the keycaps fell off! Drag or tap each key back to its correct position.
+            Think you know your layout?
           </p>
-          <div style={{ display: "flex", gap: 24, justifyContent: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
             <button onClick={() => startGame("pc")} style={{
               background: "linear-gradient(135deg, #1a5276, #2980b9)",
               color: "#fff", border: "none", borderRadius: 16,
-              padding: "32px 48px", cursor: "pointer", fontSize: 20,
+              padding: "28px 36px", cursor: "pointer", fontSize: 18,
               fontWeight: 600, boxShadow: "0 4px 20px rgba(41,128,185,0.3)",
-              display: "flex", flexDirection: "column", alignItems: "center", gap: 8
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+              minWidth: 160
             }}>
               <span style={{ fontSize: 36 }}>{"\uD83D\uDDA5\uFE0F"}</span>
               <span>PC Layout</span>
-              <span style={{ fontSize: 13, fontWeight: 400, opacity: 0.8 }}>Windows / Standard</span>
-              {bestTimes.pc && <span style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Best: {formatTime(bestTimes.pc)}</span>}
+              <span style={{ fontSize: 12, fontWeight: 400, opacity: 0.8 }}>Windows / Standard</span>
+              {bestTimes.pc && <span style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>Best: {formatTime(bestTimes.pc)}</span>}
             </button>
             <button onClick={() => startGame("mac")} style={{
               background: "linear-gradient(135deg, #2c3e50, #4a4a4a)",
               color: "#fff", border: "none", borderRadius: 16,
-              padding: "32px 48px", cursor: "pointer", fontSize: 20,
+              padding: "28px 36px", cursor: "pointer", fontSize: 18,
               fontWeight: 600, boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
-              display: "flex", flexDirection: "column", alignItems: "center", gap: 8
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+              minWidth: 160
             }}>
               <span style={{ fontSize: 36 }}>{"\uD83C\uDF4E"}</span>
               <span>Mac Layout</span>
-              <span style={{ fontSize: 13, fontWeight: 400, opacity: 0.8 }}>Apple / macOS</span>
-              {bestTimes.mac && <span style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Best: {formatTime(bestTimes.mac)}</span>}
+              <span style={{ fontSize: 12, fontWeight: 400, opacity: 0.8 }}>Apple / macOS</span>
+              {bestTimes.mac && <span style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>Best: {formatTime(bestTimes.mac)}</span>}
             </button>
           </div>
         </div>
@@ -213,43 +303,49 @@ function KeyboardPuzzle() {
   // ---- GAME SCREEN ----
   const allPlaced = Object.keys(placed).length === slots.length;
   const perfect = score && score.correct === score.total;
+  const keySize = 52;
+  const gap = 5;
+  const scaledGap = gap * scale;
+
+  const selectedBorder = "2px solid " + C.selected;
+  const selectedShadow = "0 0 12px rgba(245,197,66,0.6)";
 
   return (
     <div style={{
       minHeight: "100vh",
       background: "linear-gradient(135deg, "+C.bg+" 0%, #0d1b2a 100%)",
-      color: C.textLight, padding: "20px 20px 40px",
+      color: C.textLight, padding: "16px 12px 32px",
       display: "flex", flexDirection: "column", alignItems: "center"
     }}>
       {/* Header */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        width: "100%", maxWidth: 960, marginBottom: 20
+        width: "100%", maxWidth: 960, marginBottom: 16, gap: 8
       }}>
         <button onClick={resetGame} style={{
           background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
-          color: C.textLight, borderRadius: 10, padding: "8px 20px",
-          cursor: "pointer", fontSize: 14, fontWeight: 500
+          color: C.textLight, borderRadius: 10, padding: "6px 14px",
+          cursor: "pointer", fontSize: 13, fontWeight: 500, whiteSpace: "nowrap"
         }}>{"\u2190"} Back</button>
-        <div style={{ textAlign: "center" }}>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>
+        <div style={{ textAlign: "center", flex: 1, minWidth: 0 }}>
+          <h2 style={{ margin: 0, fontSize: "clamp(16px, 4vw, 22px)", fontWeight: 600 }}>
             {"\u2328\uFE0F"} {mode === "mac" ? "Mac" : "PC"} Keyboard
           </h2>
-          <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>
-            {tray.length} keys remaining
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
+            {selected ? "Tap a slot to place the key" : tray.length + " keys remaining"}
           </div>
         </div>
         <div style={{
           background: "rgba(255,255,255,0.1)", borderRadius: 10,
-          padding: "8px 20px", fontSize: 20, fontWeight: 600,
-          fontVariantNumeric: "tabular-nums", minWidth: 80, textAlign: "center"
+          padding: "6px 14px", fontSize: 18, fontWeight: 600,
+          fontVariantNumeric: "tabular-nums", textAlign: "center", whiteSpace: "nowrap"
         }}>{formatTime(timer)}</div>
       </div>
 
       {/* Progress bar */}
       <div style={{
-        width: "100%", maxWidth: 960, height: 6, borderRadius: 3,
-        background: "rgba(255,255,255,0.1)", marginBottom: 24, overflow: "hidden"
+        width: "100%", maxWidth: 960, height: 5, borderRadius: 3,
+        background: "rgba(255,255,255,0.1)", marginBottom: 16, overflow: "hidden"
       }}>
         <div style={{
           height: "100%", borderRadius: 3,
@@ -262,72 +358,92 @@ function KeyboardPuzzle() {
       </div>
 
       {/* Keyboard Board */}
-      <div style={{
-        background: C.board, borderRadius: 16, padding: 16,
+      <div ref={boardRef} style={{
+        background: C.board, borderRadius: Math.round(16 * scale), padding: Math.round(12 * scale),
         boxShadow: "0 8px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)",
-        border: "1px solid rgba(255,255,255,0.06)", marginBottom: 28
+        border: "1px solid rgba(255,255,255,0.06)", marginBottom: 20,
+        maxWidth: "100%"
       }}>
         {rows.map((row, r) => (
-          <div key={r} style={{ display: "flex", gap: 5, marginBottom: r < rows.length - 1 ? 5 : 0, justifyContent: "center" }}>
+          <div key={r} style={{
+            display: "flex", gap: scaledGap,
+            marginBottom: r < rows.length - 1 ? scaledGap : 0,
+            justifyContent: "center"
+          }}>
             {row.map((key, c) => {
               const slotId = r+"-"+c;
               const w = getKeyWidth(key);
               const placedKey = placed[slotId];
               const result = results[slotId];
               const isHovered = hoverSlot === slotId && dragging;
+              const isSelected = selected && selected.type === "slot" && selected.slotId === slotId;
 
               let bg = C.slot;
               let border = "2px dashed rgba(255,255,255,0.15)";
               let shadow = "inset 0 2px 4px rgba(0,0,0,0.3)";
 
               if (result === "correct") {
-                bg = "rgba(46,204,113,0.25)";
-                border = "2px solid "+C.correct;
+                bg = "rgba(46,204,113,0.25)"; border = "2px solid "+C.correct;
                 shadow = "inset 0 2px 4px rgba(0,0,0,0.2), 0 0 12px rgba(46,204,113,0.3)";
               } else if (result === "incorrect") {
-                bg = "rgba(231,76,60,0.25)";
-                border = "2px solid "+C.incorrect;
+                bg = "rgba(231,76,60,0.25)"; border = "2px solid "+C.incorrect;
                 shadow = "inset 0 2px 4px rgba(0,0,0,0.2), 0 0 12px rgba(231,76,60,0.3)";
+              } else if (isSelected) {
+                bg = C.slotHover; border = selectedBorder; shadow = selectedShadow;
               } else if (isHovered) {
-                bg = C.slotHover;
-                border = "2px dashed rgba(255,255,255,0.4)";
+                bg = C.slotHover; border = "2px dashed rgba(255,255,255,0.4)";
+              } else if (selected && !placedKey) {
+                // highlight empty slots when something is selected
+                bg = "rgba(245,197,66,0.08)"; border = "2px dashed rgba(245,197,66,0.3)";
               }
 
               return (
                 <div key={c}
+                  onClick={() => onTapSlot(slotId)}
                   onDragOver={e => { e.preventDefault(); setHoverSlot(slotId); }}
                   onDragLeave={() => setHoverSlot(null)}
                   onDrop={e => { e.preventDefault(); onDropOnSlot(slotId); }}
                   style={{
-                    width: w * 52, height: 48, borderRadius: 8,
+                    width: Math.round(w * keySize * scale),
+                    height: Math.round(48 * scale),
+                    borderRadius: Math.round(8 * scale),
                     background: bg, border: border, boxShadow: shadow,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    position: "relative", transition: "all 0.2s ease"
+                    position: "relative", transition: "all 0.15s ease",
+                    cursor: "pointer"
                   }}
                 >
                   {placedKey && (
-                    <div draggable={!checked}
-                      onDragStart={() => onDragStartFromSlot(slotId, placedKey)}
+                    <div draggable={!checked && !isMobile}
+                      onDragStart={(e) => { e.stopPropagation(); onDragStartFromSlot(slotId, placedKey); }}
                       style={{
-                        width: "calc(100% - 4px)", height: "calc(100% - 4px)", borderRadius: 6,
+                        width: "calc(100% - 4px)", height: "calc(100% - 4px)",
+                        borderRadius: Math.round(6 * scale),
                         background: result === "correct"
                           ? "linear-gradient(180deg, #5dde8e, #2ecc71)"
                           : result === "incorrect"
                             ? "linear-gradient(180deg, #f06060, #c0392b)"
-                            : "linear-gradient(180deg, #f0f0f0, #d5d5d5)",
+                            : isSelected
+                              ? "linear-gradient(180deg, #ffe082, #f5c542)"
+                              : "linear-gradient(180deg, #f0f0f0, #d5d5d5)",
                         color: result ? "#fff" : C.capText,
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: w > 1.5 ? 12 : 14, fontWeight: 700,
-                        cursor: checked ? "default" : "grab",
-                        boxShadow: result ? "0 2px 6px rgba(0,0,0,0.3)" : "0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.8)",
+                        fontSize: Math.round((w > 1.5 ? 11 : 13) * scale),
+                        fontWeight: 700,
+                        cursor: checked ? "default" : "pointer",
+                        boxShadow: isSelected ? "0 2px 8px rgba(245,197,66,0.5)"
+                          : result ? "0 2px 6px rgba(0,0,0,0.3)"
+                          : "0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.8)",
                         textShadow: result ? "0 1px 2px rgba(0,0,0,0.3)" : "none",
-                        userSelect: "none", letterSpacing: "0.5px"
+                        userSelect: "none", letterSpacing: "0.5px",
+                        pointerEvents: "none"
                       }}
                     >{placedKey}</div>
                   )}
                   {result === "incorrect" && (
                     <div style={{
-                      position: "absolute", bottom: -18, fontSize: 10,
+                      position: "absolute", bottom: Math.round(-16 * scale),
+                      fontSize: Math.round(9 * scale),
                       color: C.correct, fontWeight: 600, whiteSpace: "nowrap"
                     }}>{slots.find(s => s.id === slotId)?.correctKey}</div>
                   )}
@@ -341,28 +457,28 @@ function KeyboardPuzzle() {
       {/* Score */}
       {checked && score && (
         <div style={{
-          textAlign: "center", marginBottom: 20,
+          textAlign: "center", marginBottom: 20, width: "100%", maxWidth: 500,
           background: perfect ? "rgba(46,204,113,0.15)" : "rgba(255,255,255,0.05)",
           border: "1px solid "+(perfect ? "rgba(46,204,113,0.3)" : "rgba(255,255,255,0.1)"),
-          borderRadius: 14, padding: "20px 40px"
+          borderRadius: 14, padding: "20px 24px"
         }}>
           <div style={{ fontSize: 32, marginBottom: 6 }}>{perfect ? "\uD83C\uDF89" : "\uD83E\uDD14"}</div>
-          <div style={{ fontSize: 28, fontWeight: 700 }}>{score.correct} / {score.total}</div>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{score.correct} / {score.total}</div>
           <div style={{ fontSize: 14, color: C.textMuted, marginTop: 4 }}>
             {perfect
               ? "Perfect! Completed in "+formatTime(timer)
               : Math.round((score.correct/score.total)*100)+"% correct \u2014 "+(score.total-score.correct)+" keys misplaced"
             }
           </div>
-          <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 16 }}>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 16, flexWrap: "wrap" }}>
             <button onClick={tryAgain} style={{
               background: C.accent, color: "#fff", border: "none",
-              borderRadius: 10, padding: "10px 28px", cursor: "pointer", fontSize: 15, fontWeight: 600
+              borderRadius: 10, padding: "10px 24px", cursor: "pointer", fontSize: 15, fontWeight: 600
             }}>Try Again</button>
             <button onClick={resetGame} style={{
               background: "rgba(255,255,255,0.1)", color: C.textLight,
               border: "1px solid rgba(255,255,255,0.15)",
-              borderRadius: 10, padding: "10px 28px", cursor: "pointer", fontSize: 15, fontWeight: 500
+              borderRadius: 10, padding: "10px 24px", cursor: "pointer", fontSize: 15, fontWeight: 500
             }}>Switch Layout</button>
           </div>
         </div>
@@ -370,57 +486,87 @@ function KeyboardPuzzle() {
 
       {/* Action buttons */}
       {!checked && (
-        <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", justifyContent: "center" }}>
           <button onClick={checkAnswers} disabled={!allPlaced} style={{
             background: allPlaced ? "linear-gradient(135deg, "+C.accent+", #c0392b)" : "rgba(255,255,255,0.08)",
             color: allPlaced ? "#fff" : "rgba(255,255,255,0.3)",
-            border: "none", borderRadius: 12, padding: "12px 36px",
+            border: "none", borderRadius: 12, padding: "10px 28px",
             cursor: allPlaced ? "pointer" : "not-allowed",
-            fontSize: 16, fontWeight: 600,
+            fontSize: 15, fontWeight: 600,
             boxShadow: allPlaced ? "0 4px 20px rgba(233,69,96,0.3)" : "none",
             transition: "all 0.2s ease"
           }}>{"\u2713"} Check Answers</button>
           <button onClick={tryAgain} style={{
             background: "rgba(255,255,255,0.08)", color: C.textMuted,
             border: "1px solid rgba(255,255,255,0.1)",
-            borderRadius: 12, padding: "12px 24px", cursor: "pointer", fontSize: 14, fontWeight: 500
+            borderRadius: 12, padding: "10px 20px", cursor: "pointer", fontSize: 13, fontWeight: 500
           }}>Shuffle &amp; Restart</button>
+          {selected && (
+            <button onClick={() => setSelected(null)} style={{
+              background: "rgba(245,197,66,0.15)", color: C.selected,
+              border: "1px solid rgba(245,197,66,0.3)",
+              borderRadius: 12, padding: "10px 20px", cursor: "pointer", fontSize: 13, fontWeight: 500
+            }}>Deselect</button>
+          )}
         </div>
       )}
 
       {/* Key Tray */}
       {!checked && (
-        <div onDragOver={e => e.preventDefault()}
+        <div
+          onClick={onTapTrayArea}
+          onDragOver={e => e.preventDefault()}
           onDrop={e => { e.preventDefault(); onDropOnTray(); }}
           style={{
-            width: "100%", maxWidth: 960, minHeight: 120,
+            width: "100%", maxWidth: 960, minHeight: 100,
             background: C.tray, borderRadius: 16,
             border: "2px dashed rgba(255,255,255,0.1)",
-            padding: 20, display: "flex", flexWrap: "wrap",
-            gap: 8, justifyContent: "center", alignContent: "flex-start"
+            padding: "16px 12px", display: "flex", flexWrap: "wrap",
+            gap: 6, justifyContent: "center", alignContent: "flex-start"
           }}
         >
           {tray.length === 0 && (
-            <div style={{ color: C.textMuted, fontSize: 15, padding: 20 }}>
+            <div style={{ color: C.textMuted, fontSize: 14, padding: 16, textAlign: "center" }}>
               All keys placed! Click "Check Answers" to see how you did.
             </div>
           )}
-          {tray.map((key, idx) => (
-            <div key={idx} draggable
-              onDragStart={() => onDragStartFromTray(idx, key)}
-              style={{
-                width: 52, height: 46, borderRadius: 8,
-                background: "linear-gradient(180deg, #f0f0f0, #d5d5d5)",
-                color: C.capText,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 11, fontWeight: 700,
-                cursor: "grab", userSelect: "none",
-                boxShadow: "0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.9)",
-                letterSpacing: "0.5px", overflow: "hidden",
-                textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 4px"
-              }}
-            >{key}</div>
-          ))}
+          {tray.map((key, idx) => {
+            const isThisSelected = selected && selected.type === "tray" && selected.idx === idx;
+            return (
+              <div key={idx}
+                draggable={!isMobile}
+                onDragStart={() => onDragStartFromTray(idx, key)}
+                onClick={(e) => { e.stopPropagation(); onTapTrayKey(idx, key); }}
+                style={{
+                  width: Math.round(48 * scale), height: Math.round(42 * scale),
+                  borderRadius: Math.round(7 * scale),
+                  background: isThisSelected
+                    ? "linear-gradient(180deg, #ffe082, #f5c542)"
+                    : "linear-gradient(180deg, #f0f0f0, #d5d5d5)",
+                  color: C.capText,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: Math.round(10 * Math.max(scale, 0.75)),
+                  fontWeight: 700,
+                  cursor: "pointer", userSelect: "none",
+                  boxShadow: isThisSelected
+                    ? "0 3px 12px rgba(245,197,66,0.5)"
+                    : "0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.9)",
+                  letterSpacing: "0.5px",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  padding: "0 3px",
+                  transform: isThisSelected ? "translateY(-3px)" : "none",
+                  transition: "all 0.15s ease"
+                }}
+              >{key}</div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Mobile hint */}
+      {!checked && tray.length > 0 && (
+        <div style={{ color: C.textMuted, fontSize: 11, marginTop: 12, textAlign: "center", opacity: 0.6 }}>
+          {isMobile ? "Tap a key, then tap a slot to place it" : "Drag keys to slots, or tap to select and place"}
         </div>
       )}
     </div>

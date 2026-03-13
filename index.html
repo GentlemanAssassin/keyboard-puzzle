@@ -45,110 +45,22 @@ const { useState, useRef, useEffect, useMemo, useCallback } = React;
 
 // ==================== SOUND ENGINE ====================
 const SFX = {
-  ctx: null,
+  sounds: {},
+  loaded: false,
   init() {
-    if (!this.ctx) {
-      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (this.ctx.state === "suspended") this.ctx.resume();
+    if (this.loaded) return;
+    this.sounds.scatter = new Audio("Sound%20Effects/Keycaps_Scatter.WAV");
+    this.sounds.place = new Audio("Sound%20Effects/Snap_into_Place.WAV");
+    this.sounds.results = new Audio("Sound%20Effects/Game_Results.mp3");
+    // Preload
+    Object.values(this.sounds).forEach(s => { s.load(); });
+    this.loaded = true;
   },
   play(type) {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    switch(type) {
-      case "pick": { // light click when picking up a key
-        const o = this.ctx.createOscillator();
-        const g = this.ctx.createGain();
-        o.type = "sine"; o.frequency.setValueAtTime(800, t);
-        o.frequency.exponentialRampToValueAtTime(600, t + 0.05);
-        g.gain.setValueAtTime(0.15, t);
-        g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
-        o.connect(g); g.connect(this.ctx.destination);
-        o.start(t); o.stop(t + 0.08);
-        break;
-      }
-      case "place": { // satisfying snap
-        const o = this.ctx.createOscillator();
-        const g = this.ctx.createGain();
-        const o2 = this.ctx.createOscillator();
-        const g2 = this.ctx.createGain();
-        o.type = "triangle"; o.frequency.setValueAtTime(400, t);
-        g.gain.setValueAtTime(0.2, t);
-        g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-        o.connect(g); g.connect(this.ctx.destination);
-        o.start(t); o.stop(t + 0.1);
-        // thud component
-        o2.type = "sine"; o2.frequency.setValueAtTime(120, t);
-        o2.frequency.exponentialRampToValueAtTime(60, t + 0.08);
-        g2.gain.setValueAtTime(0.25, t);
-        g2.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-        o2.connect(g2); g2.connect(this.ctx.destination);
-        o2.start(t); o2.stop(t + 0.1);
-        break;
-      }
-      case "correct": { // bright chime
-        [523, 659, 784].forEach((f, i) => {
-          const o = this.ctx.createOscillator();
-          const g = this.ctx.createGain();
-          o.type = "sine"; o.frequency.setValueAtTime(f, t + i * 0.08);
-          g.gain.setValueAtTime(0, t);
-          g.gain.linearRampToValueAtTime(0.15, t + i * 0.08);
-          g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + 0.3);
-          o.connect(g); g.connect(this.ctx.destination);
-          o.start(t + i * 0.08); o.stop(t + i * 0.08 + 0.3);
-        });
-        break;
-      }
-      case "wrong": { // soft buzz
-        const o = this.ctx.createOscillator();
-        const g = this.ctx.createGain();
-        o.type = "sawtooth"; o.frequency.setValueAtTime(150, t);
-        o.frequency.linearRampToValueAtTime(120, t + 0.2);
-        g.gain.setValueAtTime(0.08, t);
-        g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-        o.connect(g); g.connect(this.ctx.destination);
-        o.start(t); o.stop(t + 0.25);
-        break;
-      }
-      case "perfect": { // celebratory arpeggio
-        [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => {
-          const o = this.ctx.createOscillator();
-          const g = this.ctx.createGain();
-          o.type = "sine"; o.frequency.setValueAtTime(f, t);
-          g.gain.setValueAtTime(0, t);
-          g.gain.linearRampToValueAtTime(0.12, t + i * 0.07);
-          g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.07 + 0.4);
-          o.connect(g); g.connect(this.ctx.destination);
-          o.start(t + i * 0.07); o.stop(t + i * 0.07 + 0.4);
-        });
-        break;
-      }
-      case "flyoff": { // cascading clatter
-        for (let i = 0; i < 12; i++) {
-          const o = this.ctx.createOscillator();
-          const g = this.ctx.createGain();
-          const n = this.ctx.createBufferSource();
-          const ng = this.ctx.createGain();
-          const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.04, this.ctx.sampleRate);
-          const data = buf.getChannelData(0);
-          for (let j = 0; j < data.length; j++) data[j] = (Math.random() * 2 - 1) * 0.5;
-          n.buffer = buf;
-          const delay = i * 0.04 + Math.random() * 0.02;
-          o.type = "square";
-          o.frequency.setValueAtTime(200 + Math.random() * 600, t + delay);
-          o.frequency.exponentialRampToValueAtTime(80, t + delay + 0.06);
-          g.gain.setValueAtTime(0.06, t + delay);
-          g.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.06);
-          ng.gain.setValueAtTime(0.1, t + delay);
-          ng.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.04);
-          o.connect(g); g.connect(this.ctx.destination);
-          n.connect(ng); ng.connect(this.ctx.destination);
-          o.start(t + delay); o.stop(t + delay + 0.06);
-          n.start(t + delay); n.stop(t + delay + 0.04);
-        }
-        break;
-      }
-    }
+    const s = this.sounds[type];
+    if (!s) return;
+    s.currentTime = 0;
+    s.play().catch(() => {});
   }
 };
 
@@ -254,7 +166,6 @@ function KeyboardPuzzle() {
 
   const playSound = useCallback((type) => {
     if (!soundOn) return;
-    SFX.init();
     SFX.play(type);
   }, [soundOn]);
 
@@ -288,7 +199,7 @@ function KeyboardPuzzle() {
   const formatTime = (s) => Math.floor(s/60) + ":" + (s%60).toString().padStart(2,"0");
 
   const startGame = (m) => {
-    SFX.init(); // ensure audio context on user gesture
+    SFX.init(); // preload sounds on user gesture
     const rows = m === "mac" ? MAC_ROWS : PC_ROWS;
     setMode(m);
     setSlots(buildSlots(rows));
@@ -304,7 +215,7 @@ function KeyboardPuzzle() {
     setTimeout(() => {
       setFlyData(genFlyOffData(rows));
       setPhase("flyoff");
-      if (soundOn) { SFX.init(); SFX.play("flyoff"); }
+      playSound("scatter");
     }, 2000);
     // Phase 3: after fly animation, start playing
     setTimeout(() => {
@@ -342,8 +253,8 @@ function KeyboardPuzzle() {
     return g;
   }
 
-  const onDragStartFromTray = (flatIdx, key) => { playSound("pick"); setDragging(key); setDragSource({ type: "tray", flatIdx }); };
-  const onDragStartFromSlot = (slotId, key) => { playSound("pick"); setDragging(key); setDragSource({ type: "slot", slotId }); };
+  const onDragStartFromTray = (e, flatIdx, key) => { e.dataTransfer.setData("text/plain", key); e.dataTransfer.effectAllowed = "move"; setDragging(key); setDragSource({ type: "tray", flatIdx }); };
+  const onDragStartFromSlot = (e, slotId, key) => { e.dataTransfer.setData("text/plain", key); e.dataTransfer.effectAllowed = "move"; setDragging(key); setDragSource({ type: "slot", slotId }); };
 
   const placeKey = (targetSlotId, sourceType, flatIdx, sourceSlotId, key) => {
     const existing = placed[targetSlotId];
@@ -384,7 +295,6 @@ function KeyboardPuzzle() {
       ng = addTrayItemToGroups(ng, selected.key); np[selected.slotId] = key;
       setPlaced(np); setTrayGroups(ng); setSelected(null); playSound("place"); return;
     }
-    playSound("pick");
     setSelected({ type: "tray", flatIdx, key });
   };
   const onTapSlot = (slotId) => {
@@ -396,7 +306,7 @@ function KeyboardPuzzle() {
         if (selected.slotId === slotId) { setSelected(null); return; }
         placeKey(slotId, "slot", null, selected.slotId, selected.key); setSelected(null);
       }
-    } else if (pk) { playSound("pick"); setSelected({ type: "slot", slotId, key: pk }); }
+    } else if (pk) { setSelected({ type: "slot", slotId, key: pk }); }
   };
   const onTapTrayArea = () => {
     if (selected && selected.type === "slot" && !checked) {
@@ -415,11 +325,9 @@ function KeyboardPuzzle() {
     setResults(r); setChecked(true); setRunning(false);
     clearInterval(intervalRef.current);
     setScore({ correct, total: slots.length }); setSelected(null);
+    playSound("results");
     if (correct === slots.length) {
-      playSound("perfect");
       if (!bestTimes[mode] || timer < bestTimes[mode]) setBestTimes(prev => ({ ...prev, [mode]: timer }));
-    } else {
-      playSound("wrong");
     }
   };
 
@@ -440,7 +348,7 @@ function KeyboardPuzzle() {
     tp.push("rotate("+sty.rotation+"deg) translate("+sty.offX+"px,"+sty.offY+"px)");
     return (
       <div draggable={!isMobile}
-        onDragStart={() => onDragStartFromTray(flatIdx, keyLabel)}
+        onDragStart={(e) => onDragStartFromTray(e, flatIdx, keyLabel)}
         onClick={(e) => { e.stopPropagation(); onTapTrayKey(flatIdx, keyLabel); }}
         style={{
           width: keyW, height: keyH, borderRadius: Math.round(7 * scale),
@@ -670,7 +578,7 @@ function KeyboardPuzzle() {
                 >
                   {pk && (
                     <div draggable={!checked && !isMobile}
-                      onDragStart={(e) => { e.stopPropagation(); onDragStartFromSlot(slotId, pk); }}
+                      onDragStart={(e) => { e.stopPropagation(); onDragStartFromSlot(e, slotId, pk); }}
                       style={capStyle(w, result, isWrong, isSel)}
                     >{pk}</div>
                   )}

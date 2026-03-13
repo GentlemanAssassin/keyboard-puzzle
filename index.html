@@ -146,9 +146,15 @@ function KeyboardPuzzle() {
     return [...trayGroups.letters, ...trayGroups.numbers, ...trayGroups.others];
   }, [trayGroups]);
 
-  // Scatter styles for the "others" group
+  // Scatter styles for ALL groups
+  const letterScatter = useMemo(() => {
+    return genScatterStyles(trayGroups.letters.length, scatterSeed.current);
+  }, [trayGroups.letters.length]);
+  const numberScatter = useMemo(() => {
+    return genScatterStyles(trayGroups.numbers.length, scatterSeed.current + 1000);
+  }, [trayGroups.numbers.length]);
   const otherScatter = useMemo(() => {
-    return genScatterStyles(trayGroups.others.length, scatterSeed.current);
+    return genScatterStyles(trayGroups.others.length, scatterSeed.current + 2000);
   }, [trayGroups.others.length]);
 
   // Responsive scaling
@@ -341,13 +347,13 @@ function KeyboardPuzzle() {
 
   // ---- TRAY KEY COMPONENT ----
   function TrayKey({ keyLabel, flatIdx, isLetter, isNumber, scatterStyle, isSelected: isSel }) {
-    const baseSize = Math.round(48 * scale);
-    const baseH = Math.round(42 * scale);
-    const isOther = !isLetter && !isNumber;
-    const sty = isOther && scatterStyle ? scatterStyle : { rotation: 0, offX: 0, offY: 0 };
+    const w = getKeyWidth(keyLabel);
+    const keyW = Math.round(w * 52 * scale);
+    const keyH = Math.round(42 * scale);
+    const sty = scatterStyle || { rotation: 0, offX: 0, offY: 0 };
     const transformParts = [];
-    if (isSel) transformParts.push("translateY(-3px)");
-    if (isOther) transformParts.push("rotate("+sty.rotation+"deg) translate("+sty.offX+"px,"+sty.offY+"px)");
+    if (isSel) transformParts.push("translateY(-3px) scale(1.05)");
+    transformParts.push("rotate("+sty.rotation+"deg) translate("+sty.offX+"px,"+sty.offY+"px)");
 
     return (
       <div
@@ -355,24 +361,26 @@ function KeyboardPuzzle() {
         onDragStart={() => onDragStartFromTray(flatIdx, keyLabel)}
         onClick={(e) => { e.stopPropagation(); onTapTrayKey(flatIdx, keyLabel); }}
         style={{
-          width: baseSize, height: baseH,
+          width: keyW, height: keyH,
           borderRadius: Math.round(7 * scale),
           background: isSel
-            ? "linear-gradient(180deg, #ffe082, #f5c542)"
-            : "linear-gradient(180deg, #f0f0f0, #d5d5d5)",
+            ? "linear-gradient(180deg, #fff3c4 0%, #f5c542 100%)"
+            : "linear-gradient(180deg, #fafafa 0%, #e8e8e8 40%, #d0d0d0 100%)",
           color: C.capText,
           display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: Math.round(10 * Math.max(scale, 0.75)),
+          fontSize: Math.round((w > 1.5 ? 9 : 11) * Math.max(scale, 0.75)),
           fontWeight: 700,
           cursor: "pointer", userSelect: "none",
           boxShadow: isSel
-            ? "0 3px 12px rgba(245,197,66,0.5)"
-            : "0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.9)",
+            ? "0 4px 14px rgba(245,197,66,0.5), inset 0 1px 0 rgba(255,255,255,1)"
+            : "0 4px 6px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.95), inset 0 -2px 3px rgba(0,0,0,0.08)",
           letterSpacing: "0.5px",
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          padding: "0 3px",
+          padding: "0 4px",
           transform: transformParts.join(" ") || "none",
-          transition: "all 0.15s ease"
+          transition: "all 0.15s ease",
+          borderTop: "1px solid rgba(255,255,255,0.9)",
+          borderBottom: "2px solid rgba(0,0,0,0.15)"
         }}
       >{keyLabel}</div>
     );
@@ -559,23 +567,29 @@ function KeyboardPuzzle() {
                         width: "calc(100% - 4px)", height: "calc(100% - 4px)",
                         borderRadius: Math.round(6 * scale),
                         background: result === "correct"
-                          ? "linear-gradient(180deg, #5dde8e, #2ecc71)"
+                          ? "linear-gradient(180deg, #6be89a 0%, #3dd47a 40%, #27ae60 100%)"
                           : isWrong
-                            ? "linear-gradient(180deg, #f06060, #c0392b)"
+                            ? "linear-gradient(180deg, #f47878 0%, #e05252 40%, #c0392b 100%)"
                             : isSelected
-                              ? "linear-gradient(180deg, #ffe082, #f5c542)"
-                              : "linear-gradient(180deg, #f0f0f0, #d5d5d5)",
+                              ? "linear-gradient(180deg, #fff3c4 0%, #f5c542 100%)"
+                              : "linear-gradient(180deg, #fafafa 0%, #e8e8e8 40%, #d0d0d0 100%)",
                         color: result ? "#fff" : C.capText,
                         display: "flex", alignItems: "center", justifyContent: "center",
                         fontSize: Math.round((w > 1.5 ? 11 : 13) * scale),
                         fontWeight: 700,
                         cursor: checked ? "default" : "pointer",
-                        boxShadow: isSelected ? "0 2px 8px rgba(245,197,66,0.5)"
-                          : result ? "0 2px 6px rgba(0,0,0,0.3)"
-                          : "0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.8)",
+                        boxShadow: isSelected
+                          ? "0 3px 10px rgba(245,197,66,0.5), inset 0 1px 0 rgba(255,255,255,1)"
+                          : result === "correct"
+                            ? "0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.4), inset 0 -2px 3px rgba(0,0,0,0.15)"
+                            : isWrong
+                              ? "0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.3), inset 0 -2px 3px rgba(0,0,0,0.15)"
+                              : "0 4px 6px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.95), inset 0 -2px 3px rgba(0,0,0,0.08)",
                         textShadow: result ? "0 1px 2px rgba(0,0,0,0.3)" : "none",
                         userSelect: "none", letterSpacing: "0.5px",
-                        pointerEvents: "none"
+                        pointerEvents: "none",
+                        borderTop: result ? "none" : "1px solid rgba(255,255,255,0.9)",
+                        borderBottom: result ? "none" : "2px solid rgba(0,0,0,0.15)"
                       }}
                     >{placedKey}</div>
                   )}
@@ -676,11 +690,11 @@ function KeyboardPuzzle() {
           {/* Letters group */}
           {trayGroups.letters.length > 0 && (
             <div>
-              <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1, paddingLeft: 4 }}>Letters</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, justifyContent: "flex-start" }}>
+              <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1, paddingLeft: 4 }}>Letters</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-start", padding: "4px 2px" }}>
                 {trayGroups.letters.map((key, i) => (
                   <TrayKey key={"l-"+key+"-"+i} keyLabel={key} flatIdx={lettersOffset + i}
-                    isLetter={true} isNumber={false}
+                    isLetter={true} isNumber={false} scatterStyle={letterScatter[i]}
                     isSelected={selected && selected.type === "tray" && selected.flatIdx === lettersOffset + i} />
                 ))}
               </div>
@@ -690,11 +704,11 @@ function KeyboardPuzzle() {
           {/* Numbers group */}
           {trayGroups.numbers.length > 0 && (
             <div>
-              <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1, paddingLeft: 4 }}>Numbers</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, justifyContent: "flex-start" }}>
+              <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1, paddingLeft: 4 }}>Numbers</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-start", padding: "4px 2px" }}>
                 {trayGroups.numbers.map((key, i) => (
                   <TrayKey key={"n-"+key+"-"+i} keyLabel={key} flatIdx={numbersOffset + i}
-                    isLetter={false} isNumber={true}
+                    isLetter={false} isNumber={true} scatterStyle={numberScatter[i]}
                     isSelected={selected && selected.type === "tray" && selected.flatIdx === numbersOffset + i} />
                 ))}
               </div>
@@ -704,8 +718,8 @@ function KeyboardPuzzle() {
           {/* Other keys - scattered look */}
           {trayGroups.others.length > 0 && (
             <div>
-              <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1, paddingLeft: 4 }}>Other Keys</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-start", padding: "4px 0" }}>
+              <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1, paddingLeft: 4 }}>Other Keys</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-start", padding: "4px 2px" }}>
                 {trayGroups.others.map((key, i) => (
                   <TrayKey key={"o-"+key+"-"+i} keyLabel={key} flatIdx={othersOffset + i}
                     isLetter={false} isNumber={false} scatterStyle={otherScatter[i]}

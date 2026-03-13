@@ -12,6 +12,19 @@
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }
+  .tooltip {
+    position: absolute; top: -32px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.85); color: #2ecc71; padding: 4px 10px;
+    border-radius: 6px; font-size: 11px; font-weight: 700;
+    white-space: nowrap; pointer-events: none; z-index: 10;
+    opacity: 0; transition: opacity 0.15s ease;
+  }
+  .tooltip::after {
+    content: ""; position: absolute; top: 100%; left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent; border-top-color: rgba(0,0,0,0.85);
+  }
+  .slot-wrap:hover .tooltip, .slot-wrap:active .tooltip { opacity: 1; }
 </style>
 </head>
 <body>
@@ -20,10 +33,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <script type="text/babel">
-const { useState, useRef, useEffect, useCallback } = React;
+const { useState, useRef, useEffect, useMemo } = React;
 
 const PC_ROWS = [
-  ["\`","1","2","3","4","5","6","7","8","9","0","-","=","Backspace"],
+  ["Esc","1","2","3","4","5","6","7","8","9","0","-","=","Backspace"],
   ["Tab","Q","W","E","R","T","Y","U","I","O","P","[","]","\\"],
   ["Caps","A","S","D","F","G","H","J","K","L",";","'","Enter"],
   ["Shift","Z","X","C","V","B","N","M",",",".","/","Shift"],
@@ -31,7 +44,7 @@ const PC_ROWS = [
 ];
 
 const MAC_ROWS = [
-  ["\`","1","2","3","4","5","6","7","8","9","0","-","=","Delete"],
+  ["Esc","1","2","3","4","5","6","7","8","9","0","-","=","Delete"],
   ["Tab","Q","W","E","R","T","Y","U","I","O","P","[","]","\\"],
   ["Caps","A","S","D","F","G","H","J","K","L",";","'","Return"],
   ["Shift","Z","X","C","V","B","N","M",",",".","/","Shift"],
@@ -39,7 +52,7 @@ const MAC_ROWS = [
 ];
 
 const WIDE_KEYS = {
-  "Backspace": 2, "Delete": 2, "Tab": 1.5, "\\": 1.5,
+  "Backspace": 2, "Delete": 2, "Tab": 1.5, "\\": 1.5, "Esc": 1,
   "Caps": 1.8, "Enter": 2.2, "Return": 2.2,
   "Shift": 2.5, "Space": 6,
   "Ctrl": 1.5, "Win": 1.25, "Alt": 1.25, "Menu": 1.25,
@@ -71,10 +84,34 @@ function buildSlots(rows) {
   return slots;
 }
 
-function buildKeycaps(rows) {
-  const caps = [];
-  rows.forEach(row => row.forEach(key => caps.push(key)));
-  return shuffle(caps);
+// Categorize and group keys: letters alphabetical, numbers in order, others scattered
+function buildGroupedKeycaps(rows) {
+  const letters = [];
+  const numbers = [];
+  const others = [];
+  rows.forEach(row => row.forEach(key => {
+    if (/^[A-Z]$/.test(key)) letters.push(key);
+    else if (/^[0-9]$/.test(key)) numbers.push(key);
+    else others.push(key);
+  }));
+  letters.sort();
+  numbers.sort((a, b) => parseInt(a) - parseInt(b));
+  const shuffledOthers = shuffle(others);
+  return { letters, numbers, others: shuffledOthers };
+}
+
+// Generate stable random rotations/offsets for scattered look
+function genScatterStyles(count, seed) {
+  const styles = [];
+  let s = seed || 42;
+  function pseudoRand() { s = (s * 16807 + 0) % 2147483647; return (s - 1) / 2147483646; }
+  for (let i = 0; i < count; i++) {
+    const rot = (pseudoRand() - 0.5) * 14; // -7 to +7 degrees
+    const offX = (pseudoRand() - 0.5) * 6;  // -3 to +3 px
+    const offY = (pseudoRand() - 0.5) * 6;
+    styles.push({ rotation: rot, offX, offY });
+  }
+  return styles;
 }
 
 const C = {
@@ -88,7 +125,7 @@ function KeyboardPuzzle() {
   const [mode, setMode] = useState(null);
   const [slots, setSlots] = useState([]);
   const [placed, setPlaced] = useState({});
-  const [tray, setTray] = useState([]);
+  const [trayGroups, setTrayGroups] = useState({ letters: [], numbers: [], others: [] });
   const [dragging, setDragging] = useState(null);
   const [dragSource, setDragSource] = useState(null);
   const [hoverSlot, setHoverSlot] = useState(null);
@@ -98,10 +135,21 @@ function KeyboardPuzzle() {
   const [timer, setTimer] = useState(0);
   const [running, setRunning] = useState(false);
   const [bestTimes, setBestTimes] = useState({ pc: null, mac: null });
-  const [selected, setSelected] = useState(null); // {type:"tray",idx,key} or {type:"slot",slotId,key}
+  const [selected, setSelected] = useState(null);
   const [scale, setScale] = useState(1);
+  const [hoveredWrong, setHoveredWrong] = useState(null);
   const intervalRef = useRef(null);
-  const boardRef = useRef(null);
+  const scatterSeed = useRef(Math.floor(Math.random() * 10000));
+
+  // Build flat tray from groups
+  const tray = useMemo(() => {
+    return [...trayGroups.letters, ...trayGroups.numbers, ...trayGroups.others];
+  }, [trayGroups]);
+
+  // Scatter styles for the "others" group
+  const otherScatter = useMemo(() => {
+    return genScatterStyles(trayGroups.others.length, scatterSeed.current);
+  }, [trayGroups.others.length]);
 
   // Responsive scaling
   useEffect(() => {
@@ -138,72 +186,116 @@ function KeyboardPuzzle() {
   const startGame = (m) => {
     const rows = m === "mac" ? MAC_ROWS : PC_ROWS;
     setMode(m); setSlots(buildSlots(rows)); setPlaced({});
-    setTray(buildKeycaps(rows)); setDragging(null); setDragSource(null);
+    setTrayGroups(buildGroupedKeycaps(rows));
+    scatterSeed.current = Math.floor(Math.random() * 10000);
+    setDragging(null); setDragSource(null);
     setHoverSlot(null); setChecked(false); setResults({});
     setScore(null); setTimer(0); setRunning(true); setSelected(null);
+    setHoveredWrong(null);
   };
 
   const resetGame = () => { setMode(null); setRunning(false); clearInterval(intervalRef.current); setSelected(null); };
 
-  // Desktop drag handlers
-  const onDragStartFromTray = (idx, key) => { setDragging(key); setDragSource({ type: "tray", idx }); };
+  // Helpers to find tray index in groups
+  function findTrayGroupIndex(flatIdx) {
+    const lLen = trayGroups.letters.length;
+    const nLen = trayGroups.numbers.length;
+    if (flatIdx < lLen) return { group: "letters", idx: flatIdx };
+    if (flatIdx < lLen + nLen) return { group: "numbers", idx: flatIdx - lLen };
+    return { group: "others", idx: flatIdx - lLen - nLen };
+  }
+
+  function removeTrayItem(flatIdx) {
+    const loc = findTrayGroupIndex(flatIdx);
+    const newGroups = { letters: [...trayGroups.letters], numbers: [...trayGroups.numbers], others: [...trayGroups.others] };
+    newGroups[loc.group].splice(loc.idx, 1);
+    return newGroups;
+  }
+
+  function addTrayItem(key) {
+    const newGroups = { letters: [...trayGroups.letters], numbers: [...trayGroups.numbers], others: [...trayGroups.others] };
+    if (/^[A-Z]$/.test(key)) {
+      newGroups.letters.push(key);
+      newGroups.letters.sort();
+    } else if (/^[0-9]$/.test(key)) {
+      newGroups.numbers.push(key);
+      newGroups.numbers.sort((a, b) => parseInt(a) - parseInt(b));
+    } else {
+      newGroups.others.push(key);
+    }
+    return newGroups;
+  }
+
+  // Desktop drag
+  const onDragStartFromTray = (flatIdx, key) => { setDragging(key); setDragSource({ type: "tray", flatIdx }); };
   const onDragStartFromSlot = (slotId, key) => { setDragging(key); setDragSource({ type: "slot", slotId }); };
 
-  const placeKey = (targetSlotId, sourceType, sourceIdx, sourceSlotId, key) => {
+  const placeKey = (targetSlotId, sourceType, flatIdx, sourceSlotId, key) => {
     const existing = placed[targetSlotId];
     let newPlaced = { ...placed };
-    let newTray = [...tray];
+    let newGroups;
     if (sourceType === "tray") {
-      newTray.splice(sourceIdx, 1);
-      if (existing) newTray.push(existing);
+      newGroups = removeTrayItem(flatIdx);
+      if (existing) newGroups = addTrayItemToGroups(newGroups, existing);
       newPlaced[targetSlotId] = key;
     } else if (sourceType === "slot") {
+      newGroups = { letters: [...trayGroups.letters], numbers: [...trayGroups.numbers], others: [...trayGroups.others] };
       if (existing) { newPlaced[sourceSlotId] = existing; }
       else { delete newPlaced[sourceSlotId]; }
       newPlaced[targetSlotId] = key;
     }
-    setPlaced(newPlaced); setTray(newTray);
+    setPlaced(newPlaced);
+    if (newGroups) setTrayGroups(newGroups);
   };
+
+  function addTrayItemToGroups(groups, key) {
+    const g = { letters: [...groups.letters], numbers: [...groups.numbers], others: [...groups.others] };
+    if (/^[A-Z]$/.test(key)) { g.letters.push(key); g.letters.sort(); }
+    else if (/^[0-9]$/.test(key)) { g.numbers.push(key); g.numbers.sort((a, b) => parseInt(a) - parseInt(b)); }
+    else { g.others.push(key); }
+    return g;
+  }
 
   const onDropOnSlot = (slotId) => {
     if (!dragging || checked) return;
-    placeKey(slotId, dragSource.type, dragSource.idx, dragSource.slotId, dragging);
+    placeKey(slotId, dragSource.type, dragSource.flatIdx, dragSource.slotId, dragging);
     setDragging(null); setDragSource(null); setHoverSlot(null);
   };
 
   const onDropOnTray = () => {
     if (!dragging || checked) return;
-    let newTray = [...tray]; let newPlaced = { ...placed };
-    if (dragSource.type === "slot") { delete newPlaced[dragSource.slotId]; newTray.push(dragging); }
-    setPlaced(newPlaced); setTray(newTray); setDragging(null); setDragSource(null);
+    if (dragSource.type === "slot") {
+      let newPlaced = { ...placed };
+      delete newPlaced[dragSource.slotId];
+      setPlaced(newPlaced);
+      setTrayGroups(addTrayItem(dragging));
+    }
+    setDragging(null); setDragSource(null);
   };
 
-  // Tap-to-place (mobile friendly)
-  const onTapTrayKey = (idx, key) => {
+  // Tap-to-place
+  const onTapTrayKey = (flatIdx, key) => {
     if (checked) return;
-    if (selected && selected.type === "tray" && selected.idx === idx) {
-      setSelected(null); return; // deselect
+    if (selected && selected.type === "tray" && selected.flatIdx === flatIdx) {
+      setSelected(null); return;
     }
     if (selected && selected.type === "slot") {
-      // swap: slot key goes to tray, tray key goes to slot
       let newPlaced = { ...placed };
-      let newTray = [...tray];
-      newTray.splice(idx, 1);
-      newTray.push(selected.key);
+      let newGroups = removeTrayItem(flatIdx);
+      newGroups = addTrayItemToGroups(newGroups, selected.key);
       newPlaced[selected.slotId] = key;
-      setPlaced(newPlaced); setTray(newTray); setSelected(null);
+      setPlaced(newPlaced); setTrayGroups(newGroups); setSelected(null);
       return;
     }
-    setSelected({ type: "tray", idx, key });
+    setSelected({ type: "tray", flatIdx, key });
   };
 
   const onTapSlot = (slotId) => {
     if (checked) return;
     const placedKey = placed[slotId];
-
     if (selected) {
       if (selected.type === "tray") {
-        placeKey(slotId, "tray", selected.idx, null, selected.key);
+        placeKey(slotId, "tray", selected.flatIdx, null, selected.key);
         setSelected(null);
       } else if (selected.type === "slot") {
         if (selected.slotId === slotId) { setSelected(null); return; }
@@ -216,13 +308,12 @@ function KeyboardPuzzle() {
   };
 
   const onTapTrayArea = () => {
-    // If a slot key is selected and user taps tray area, move it back
     if (selected && selected.type === "slot" && !checked) {
       let newPlaced = { ...placed };
-      let newTray = [...tray];
       delete newPlaced[selected.slotId];
-      newTray.push(selected.key);
-      setPlaced(newPlaced); setTray(newTray); setSelected(null);
+      setPlaced(newPlaced);
+      setTrayGroups(addTrayItem(selected.key));
+      setSelected(null);
     }
   };
 
@@ -236,8 +327,7 @@ function KeyboardPuzzle() {
     });
     setResults(r); setChecked(true); setRunning(false);
     clearInterval(intervalRef.current);
-    setScore({ correct, total: slots.length });
-    setSelected(null);
+    setScore({ correct, total: slots.length }); setSelected(null);
     if (correct === slots.length) {
       if (!bestTimes[mode] || timer < bestTimes[mode]) {
         setBestTimes(prev => ({ ...prev, [mode]: timer }));
@@ -248,6 +338,45 @@ function KeyboardPuzzle() {
   const tryAgain = () => startGame(mode);
   const rows = mode === "mac" ? MAC_ROWS : PC_ROWS;
   const isMobile = typeof window !== "undefined" && window.innerWidth < 700;
+
+  // ---- TRAY KEY COMPONENT ----
+  function TrayKey({ keyLabel, flatIdx, isLetter, isNumber, scatterStyle, isSelected: isSel }) {
+    const baseSize = Math.round(48 * scale);
+    const baseH = Math.round(42 * scale);
+    const isOther = !isLetter && !isNumber;
+    const sty = isOther && scatterStyle ? scatterStyle : { rotation: 0, offX: 0, offY: 0 };
+    const transformParts = [];
+    if (isSel) transformParts.push("translateY(-3px)");
+    if (isOther) transformParts.push("rotate("+sty.rotation+"deg) translate("+sty.offX+"px,"+sty.offY+"px)");
+
+    return (
+      <div
+        draggable={!isMobile}
+        onDragStart={() => onDragStartFromTray(flatIdx, keyLabel)}
+        onClick={(e) => { e.stopPropagation(); onTapTrayKey(flatIdx, keyLabel); }}
+        style={{
+          width: baseSize, height: baseH,
+          borderRadius: Math.round(7 * scale),
+          background: isSel
+            ? "linear-gradient(180deg, #ffe082, #f5c542)"
+            : "linear-gradient(180deg, #f0f0f0, #d5d5d5)",
+          color: C.capText,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: Math.round(10 * Math.max(scale, 0.75)),
+          fontWeight: 700,
+          cursor: "pointer", userSelect: "none",
+          boxShadow: isSel
+            ? "0 3px 12px rgba(245,197,66,0.5)"
+            : "0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.9)",
+          letterSpacing: "0.5px",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          padding: "0 3px",
+          transform: transformParts.join(" ") || "none",
+          transition: "all 0.15s ease"
+        }}
+      >{keyLabel}</div>
+    );
+  }
 
   // ---- START SCREEN ----
   if (!mode) {
@@ -306,9 +435,13 @@ function KeyboardPuzzle() {
   const keySize = 52;
   const gap = 5;
   const scaledGap = gap * scale;
-
   const selectedBorder = "2px solid " + C.selected;
   const selectedShadow = "0 0 12px rgba(245,197,66,0.6)";
+
+  // Compute flat index offsets for tray groups
+  const lettersOffset = 0;
+  const numbersOffset = trayGroups.letters.length;
+  const othersOffset = trayGroups.letters.length + trayGroups.numbers.length;
 
   return (
     <div style={{
@@ -358,7 +491,7 @@ function KeyboardPuzzle() {
       </div>
 
       {/* Keyboard Board */}
-      <div ref={boardRef} style={{
+      <div style={{
         background: C.board, borderRadius: Math.round(16 * scale), padding: Math.round(12 * scale),
         boxShadow: "0 8px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)",
         border: "1px solid rgba(255,255,255,0.06)", marginBottom: 20,
@@ -377,6 +510,8 @@ function KeyboardPuzzle() {
               const result = results[slotId];
               const isHovered = hoverSlot === slotId && dragging;
               const isSelected = selected && selected.type === "slot" && selected.slotId === slotId;
+              const isWrong = result === "incorrect";
+              const correctKey = isWrong ? slots.find(s => s.id === slotId)?.correctKey : null;
 
               let bg = C.slot;
               let border = "2px dashed rgba(255,255,255,0.15)";
@@ -385,7 +520,7 @@ function KeyboardPuzzle() {
               if (result === "correct") {
                 bg = "rgba(46,204,113,0.25)"; border = "2px solid "+C.correct;
                 shadow = "inset 0 2px 4px rgba(0,0,0,0.2), 0 0 12px rgba(46,204,113,0.3)";
-              } else if (result === "incorrect") {
+              } else if (isWrong) {
                 bg = "rgba(231,76,60,0.25)"; border = "2px solid "+C.incorrect;
                 shadow = "inset 0 2px 4px rgba(0,0,0,0.2), 0 0 12px rgba(231,76,60,0.3)";
               } else if (isSelected) {
@@ -393,13 +528,17 @@ function KeyboardPuzzle() {
               } else if (isHovered) {
                 bg = C.slotHover; border = "2px dashed rgba(255,255,255,0.4)";
               } else if (selected && !placedKey) {
-                // highlight empty slots when something is selected
                 bg = "rgba(245,197,66,0.08)"; border = "2px dashed rgba(245,197,66,0.3)";
               }
 
               return (
                 <div key={c}
-                  onClick={() => onTapSlot(slotId)}
+                  className={isWrong ? "slot-wrap" : ""}
+                  onClick={() => { if (!checked) onTapSlot(slotId); }}
+                  onMouseEnter={() => { if (isWrong) setHoveredWrong(slotId); }}
+                  onMouseLeave={() => { if (isWrong) setHoveredWrong(null); }}
+                  onTouchStart={() => { if (isWrong) setHoveredWrong(slotId); }}
+                  onTouchEnd={() => { if (isWrong) setTimeout(() => setHoveredWrong(null), 1500); }}
                   onDragOver={e => { e.preventDefault(); setHoverSlot(slotId); }}
                   onDragLeave={() => setHoverSlot(null)}
                   onDrop={e => { e.preventDefault(); onDropOnSlot(slotId); }}
@@ -421,7 +560,7 @@ function KeyboardPuzzle() {
                         borderRadius: Math.round(6 * scale),
                         background: result === "correct"
                           ? "linear-gradient(180deg, #5dde8e, #2ecc71)"
-                          : result === "incorrect"
+                          : isWrong
                             ? "linear-gradient(180deg, #f06060, #c0392b)"
                             : isSelected
                               ? "linear-gradient(180deg, #ffe082, #f5c542)"
@@ -440,12 +579,11 @@ function KeyboardPuzzle() {
                       }}
                     >{placedKey}</div>
                   )}
-                  {result === "incorrect" && (
-                    <div style={{
-                      position: "absolute", bottom: Math.round(-16 * scale),
-                      fontSize: Math.round(9 * scale),
-                      color: C.correct, fontWeight: 600, whiteSpace: "nowrap"
-                    }}>{slots.find(s => s.id === slotId)?.correctKey}</div>
+                  {/* Tooltip for wrong keys on hover/touch */}
+                  {isWrong && (
+                    <div className="tooltip" style={{
+                      opacity: hoveredWrong === slotId ? 1 : undefined
+                    }}>Should be: {correctKey}</div>
                   )}
                 </div>
               );
@@ -470,6 +608,11 @@ function KeyboardPuzzle() {
               : Math.round((score.correct/score.total)*100)+"% correct \u2014 "+(score.total-score.correct)+" keys misplaced"
             }
           </div>
+          {!perfect && (
+            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 6, opacity: 0.7 }}>
+              Hover or tap wrong keys to see the correct answer
+            </div>
+          )}
           <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 16, flexWrap: "wrap" }}>
             <button onClick={tryAgain} style={{
               background: C.accent, color: "#fff", border: "none",
@@ -521,8 +664,7 @@ function KeyboardPuzzle() {
             width: "100%", maxWidth: 960, minHeight: 100,
             background: C.tray, borderRadius: 16,
             border: "2px dashed rgba(255,255,255,0.1)",
-            padding: "16px 12px", display: "flex", flexWrap: "wrap",
-            gap: 6, justifyContent: "center", alignContent: "flex-start"
+            padding: "16px 12px", display: "flex", flexDirection: "column", gap: 12
           }}
         >
           {tray.length === 0 && (
@@ -530,40 +672,52 @@ function KeyboardPuzzle() {
               All keys placed! Click "Check Answers" to see how you did.
             </div>
           )}
-          {tray.map((key, idx) => {
-            const isThisSelected = selected && selected.type === "tray" && selected.idx === idx;
-            return (
-              <div key={idx}
-                draggable={!isMobile}
-                onDragStart={() => onDragStartFromTray(idx, key)}
-                onClick={(e) => { e.stopPropagation(); onTapTrayKey(idx, key); }}
-                style={{
-                  width: Math.round(48 * scale), height: Math.round(42 * scale),
-                  borderRadius: Math.round(7 * scale),
-                  background: isThisSelected
-                    ? "linear-gradient(180deg, #ffe082, #f5c542)"
-                    : "linear-gradient(180deg, #f0f0f0, #d5d5d5)",
-                  color: C.capText,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: Math.round(10 * Math.max(scale, 0.75)),
-                  fontWeight: 700,
-                  cursor: "pointer", userSelect: "none",
-                  boxShadow: isThisSelected
-                    ? "0 3px 12px rgba(245,197,66,0.5)"
-                    : "0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.9)",
-                  letterSpacing: "0.5px",
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  padding: "0 3px",
-                  transform: isThisSelected ? "translateY(-3px)" : "none",
-                  transition: "all 0.15s ease"
-                }}
-              >{key}</div>
-            );
-          })}
+
+          {/* Letters group */}
+          {trayGroups.letters.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1, paddingLeft: 4 }}>Letters</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, justifyContent: "flex-start" }}>
+                {trayGroups.letters.map((key, i) => (
+                  <TrayKey key={"l-"+key+"-"+i} keyLabel={key} flatIdx={lettersOffset + i}
+                    isLetter={true} isNumber={false}
+                    isSelected={selected && selected.type === "tray" && selected.flatIdx === lettersOffset + i} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Numbers group */}
+          {trayGroups.numbers.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1, paddingLeft: 4 }}>Numbers</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, justifyContent: "flex-start" }}>
+                {trayGroups.numbers.map((key, i) => (
+                  <TrayKey key={"n-"+key+"-"+i} keyLabel={key} flatIdx={numbersOffset + i}
+                    isLetter={false} isNumber={true}
+                    isSelected={selected && selected.type === "tray" && selected.flatIdx === numbersOffset + i} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Other keys - scattered look */}
+          {trayGroups.others.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1, paddingLeft: 4 }}>Other Keys</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-start", padding: "4px 0" }}>
+                {trayGroups.others.map((key, i) => (
+                  <TrayKey key={"o-"+key+"-"+i} keyLabel={key} flatIdx={othersOffset + i}
+                    isLetter={false} isNumber={false} scatterStyle={otherScatter[i]}
+                    isSelected={selected && selected.type === "tray" && selected.flatIdx === othersOffset + i} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Mobile hint */}
+      {/* Hint */}
       {!checked && tray.length > 0 && (
         <div style={{ color: C.textMuted, fontSize: 11, marginTop: 12, textAlign: "center", opacity: 0.6 }}>
           {isMobile ? "Tap a key, then tap a slot to place it" : "Drag keys to slots, or tap to select and place"}

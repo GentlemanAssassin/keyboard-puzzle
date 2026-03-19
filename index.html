@@ -91,6 +91,12 @@ const PC_ROWS = [
   ["Shift","Z","X","C","V","B","N","M",",",".","/","Shift"],
   ["Ctrl","Win","Alt","Space","Alt","Win","Menu","Ctrl"]
 ];
+const EASY_ROWS = [
+  ["1","2","3","4","5","6","7","8","9","0"],
+  ["Q","W","E","R","T","Y","U","I","O","P"],
+  ["A","S","D","F","G","H","J","K","L"],
+  ["Z","X","C","V","B","N","M"]
+];
 const MAC_ROWS = [
   ["Esc","1","2","3","4","5","6","7","8","9","0","-","=","Delete"],
   ["Tab","Q","W","E","R","T","Y","U","I","O","P","[","]","\\"],
@@ -174,7 +180,7 @@ function KeyboardPuzzle() {
   const [score, setScore] = useState(null);
   const [timer, setTimer] = useState(0);
   const [running, setRunning] = useState(false);
-  const [bestTimes, setBestTimes] = useState({ pc: null, mac: null });
+  const [bestTimes, setBestTimes] = useState({ pc: null, mac: null, easy: null });
   const [selected, setSelected] = useState(null);
   const [scale, setScale] = useState(1);
   const [hoveredWrong, setHoveredWrong] = useState(null);
@@ -200,7 +206,7 @@ function KeyboardPuzzle() {
   useEffect(() => {
     function calcScale() {
       if (!mode) return;
-      const rows = mode === "mac" ? MAC_ROWS : PC_ROWS;
+      const rows = mode === "mac" ? MAC_ROWS : mode === "easy" ? EASY_ROWS : PC_ROWS;
       const maxRowWidth = Math.max(...rows.map(r => getRowTotalWidth(r)));
       const bw = maxRowWidth * 52 + 13 * 5 + 32;
       setScale(Math.min(1, (window.innerWidth - 24) / bw));
@@ -219,7 +225,7 @@ function KeyboardPuzzle() {
 
   const startGame = (m) => {
     SFX.init(); // preload sounds on user gesture
-    const rows = m === "mac" ? MAC_ROWS : PC_ROWS;
+    const rows = m === "mac" ? MAC_ROWS : m === "easy" ? EASY_ROWS : PC_ROWS;
     setMode(m);
     setSlots(buildSlots(rows));
     setPlaced({});
@@ -365,10 +371,11 @@ function KeyboardPuzzle() {
     if (correct === slots.length) {
       if (!bestTimes[mode] || timer < bestTimes[mode]) setBestTimes(prev => ({ ...prev, [mode]: timer }));
     }
+
   };
 
   const tryAgain = () => startGame(mode);
-  const rows = mode === "mac" ? MAC_ROWS : PC_ROWS;
+  const rows = mode === "mac" ? MAC_ROWS : mode === "easy" ? EASY_ROWS : PC_ROWS;
   const isMobile = typeof window !== "undefined" && window.innerWidth < 700;
   const keySize = 52;
   const scaledGap = 5 * scale;
@@ -456,6 +463,28 @@ function KeyboardPuzzle() {
           <p style={{ fontSize: "clamp(13px, 3vw, 16px)", color: C.textMuted, margin: "0 0 28px", lineHeight: 1.6 }}>
             All the keycaps fell off! Drag or tap each key back to its correct position. Think you know your layout?
           </p>
+          {/* Easy Mode */}
+          <div style={{ marginBottom: 20 }}>
+            <button onClick={() => startGame("easy")} style={{
+              background: "linear-gradient(135deg, #1a6b3c, #27ae60)", color: "#fff", border: "none", borderRadius: 14,
+              padding: "18px 40px", cursor: "pointer", fontSize: 16, fontWeight: 600, boxShadow: "0 4px 20px rgba(39,174,96,0.35)",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 200, margin: "0 auto",
+              transition: "transform 0.15s ease"
+            }} onMouseEnter={e => e.currentTarget.style.transform="translateY(-2px)"} onMouseLeave={e => e.currentTarget.style.transform="none"}>
+              <span style={{ fontSize: 28 }}>{"🟢"}</span>
+              <span>Easy Mode</span>
+              <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.85 }}>Letters &amp; Numbers only</span>
+              {bestTimes.easy && <span style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>Best: {formatTime(bestTimes.easy)}</span>}
+            </button>
+          </div>
+
+          {/* Full Layouts divider */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+            <div style={{ height: 1, flex: 1, background: "rgba(255,255,255,0.08)" }} />
+            <span style={{ fontSize: 10, color: C.textMuted, textTransform: "uppercase", letterSpacing: 1.5, whiteSpace: "nowrap" }}>Full Layout</span>
+            <div style={{ height: 1, flex: 1, background: "rgba(255,255,255,0.08)" }} />
+          </div>
+
           <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
             <button onClick={() => startGame("pc")} style={{
               background: "linear-gradient(135deg, #1a5276, #2980b9)", color: "#fff", border: "none", borderRadius: 14,
@@ -511,7 +540,7 @@ function KeyboardPuzzle() {
         color: C.textLight, padding: "24px 12px 32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
         <img src="logo.PNG" alt="Ektakto Games" style={{ height: 36, width: "auto", objectFit: "contain", marginBottom: 16, opacity: 0.6 }} />
         <h2 style={{ margin: "0 0 8px", fontSize: "clamp(18px, 4vw, 24px)", fontWeight: 600 }}>
-          {"\u2328\uFE0F"} {mode === "mac" ? "Mac" : "PC"} Keyboard Puzzle
+          {"\u2328\uFE0F"} {mode === "mac" ? "Mac" : mode === "easy" ? "Easy Mode" : "PC"} Keyboard Puzzle
         </h2>
         <div style={{ fontSize: 14, color: C.textMuted, marginBottom: 24 }}>
           {phase === "intro" ? "Look at the keyboard..." : "Oh no! The keycaps flew off!"}
@@ -588,7 +617,7 @@ function KeyboardPuzzle() {
         </button>
         <div style={{ textAlign: "center", flex: 1, minWidth: 0 }}>
           <h2 style={{ margin: 0, fontSize: "clamp(16px, 4vw, 22px)", fontWeight: 600 }}>
-            {"\u2328\uFE0F"} {mode === "mac" ? "Mac" : "PC"} Keyboard Puzzle
+            {"\u2328\uFE0F"} {mode === "mac" ? "Mac" : mode === "easy" ? "Easy Mode" : "PC"} Keyboard Puzzle
           </h2>
           <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
             {selected ? "Tap a slot to place the key" : tray.length + " keys remaining"}
